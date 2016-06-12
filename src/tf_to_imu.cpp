@@ -8,21 +8,27 @@
 
 using std::tuple;
 using std::get;
+using std::string;
 
 tuple<bool, geometry_msgs::TransformStamped>
-    maybe_get_transform(const tf2_ros::Buffer &buffer);
+    maybe_get_transform(string const &parent_frame, string const &child_frame,
+                        const tf2_ros::Buffer &buffer);
 
-geometry_msgs::TransformStamped get_transform(const tf2_ros::Buffer &buffer);
+geometry_msgs::TransformStamped get_transform(string const &parent_frame,
+                                              string const &child_frame,
+                                              const tf2_ros::Buffer &buffer);
 
 tuple<bool, geometry_msgs::TransformStamped>
-maybe_get_transform(const tf2_ros::Buffer &buffer)
+maybe_get_transform(string const &parent_frame, string const &child_frame,
+                    const tf2_ros::Buffer &buffer)
 {
   bool got_transform = false;
   geometry_msgs::TransformStamped current_transformation;
   try
   {
-    current_transformation = buffer.lookupTransform("velodyne",
-                                                    "odom", ros::Time::now(),
+    current_transformation = buffer.lookupTransform(child_frame,
+                                                    parent_frame,
+                                                    ros::Time::now(),
                                                     ros::Duration(1.0));
     got_transform = true;
   }
@@ -34,13 +40,15 @@ maybe_get_transform(const tf2_ros::Buffer &buffer)
                                                       current_transformation);
 }
 
-geometry_msgs::TransformStamped get_transform(const tf2_ros::Buffer &buffer)
+geometry_msgs::TransformStamped get_transform(string const &parent_frame,
+                                              string const &child_frame,
+                                              const tf2_ros::Buffer &buffer)
 {
   tuple<bool, geometry_msgs::TransformStamped> prev_transform;
   get<0>(prev_transform) = false;
-  while (!get<0>(prev_transform))
+  while (ros::ok() && !get<0>(prev_transform))
   {
-    prev_transform = maybe_get_transform(buffer);
+    prev_transform = maybe_get_transform(parent_frame, child_frame, buffer);
   }
   return get<1>(prev_transform);
 }
@@ -55,7 +63,8 @@ geometry_msgs::Vector3 operator-(geometry_msgs::Vector3 const &lhs,
   return output;
 }
 
-geometry_msgs::Vector3 operator/(geometry_msgs::Vector3 const &lhs, double scalar)
+geometry_msgs::Vector3 operator/(geometry_msgs::Vector3 const &lhs,
+                                 double scalar)
 {
   geometry_msgs::Vector3 output;
   output.x = lhs.x / scalar;
@@ -66,23 +75,33 @@ geometry_msgs::Vector3 operator/(geometry_msgs::Vector3 const &lhs, double scala
 
 int main(int argc, char *argv[])
 {
-  ros::init(argc, argv, "tf_to_raw_udp");
+  ros::init(argc, argv, "tf_to_imu");
 
   tf2_ros::Buffer buffer;
   tf2_ros::TransformListener tf2_listener(buffer);
   ros::NodeHandle node_handle;
+
+  ros::NodeHandle p_node_handle("~");
+  string const parent_frame = p_node_handle.param("parent_frame",
+                                                  string("parent_frame"));
+  string const child_frame = p_node_handle.param("child_frame",
+                                                 string("child_frame"));
+
   ros::Publisher imu_pub(
       node_handle.advertise<sensor_msgs::Imu>("/imu/data", 5));
 
-  geometry_msgs::TransformStamped prev_prev_transform = get_transform(buffer);
-  geometry_msgs::TransformStamped prev_transform = get_transform(buffer);
+  geometry_msgs::TransformStamped prev_prev_transform = get_transform(
+      parent_frame, child_frame, buffer);
+  geometry_msgs::TransformStamped prev_transform = get_transform(parent_frame,
+                                                                 child_frame,
+                                                                 buffer);
 
   ros::Rate rate(50);
 
   while (ros::ok())
   {
     geometry_msgs::TransformStamped current_transformation(
-        get_transform(buffer));
+        get_transform(parent_frame, child_frame,buffer));
     sensor_msgs::Imu imu_msg;
     imu_msg.header = current_transformation.header;
     imu_msg.orientation = current_transformation.transform.rotation;
@@ -92,11 +111,21 @@ int main(int argc, char *argv[])
     geometry_msgs::Vector3 const prev_delta_translation =
         prev_transform.transform.translation -
         prev_prev_transform.transform.translation;
-//    ros::Duration delta_time = current_transformation.header.stamp - prev_transform.header.stamp;
-    double delta_time_s = current_transformation.header.stamp.toSec() - prev_transform.header.stamp.toSec();
-    imu_msg.linear_acceleration = (delta_translation - prev_delta_translation) / delta_time_s;
-    imu_msg.linear_acceleration.z -= 9.81;
-    imu_pub.publish(imu_msg);
+    double const delta_time_s = current_transformation.header.stamp.toSec() -
+                                prev_transform.header.stamp.toSec();
+    double const prev_delta_time_s = prev_transform.header.stamp.toSec() -
+                                     prev_prev_transform.header.stamp.toSec();
+    if (delta_time_s > 0.0 && prev_delta_time_s > 0.0)
+    {
+      geometry_msgs::Vector3 const average_velocity_mps =
+          delta_translation / delta_time_s;
+      geometry_msgs::Vector3 const prev_average_velocity_mps =
+          prev_delta_translation / prev_delta_time_s;
+      imu_msg.linear_acceleration =
+          (average_velocity_mps - prev_average_velocity_mps) / delta_time_s;
+      imu_msg.linear_acceleration.z += 9.81;
+      imu_pub.publish(imu_msg);
+    }
     prev_prev_transform = prev_transform;
     prev_transform = current_transformation;
     rate.sleep();
