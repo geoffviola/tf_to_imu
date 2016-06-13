@@ -10,13 +10,6 @@ using std::string;
 
 static char const* const IMU_TOPIC_NAME = "imu/data";
 
-double acceleration_to_position(double a_m_s2, double dt_s);
-
-double acceleration_to_position(double const a_m_s2, double const dt_s)
-{
-  return 0.5 * a_m_s2 * dt_s * dt_s;
-}
-
 geometry_msgs::Vector3 operator+(geometry_msgs::Vector3 const &lhs,
                                  geometry_msgs::Vector3 const &rhs)
 {
@@ -37,15 +30,13 @@ geometry_msgs::Vector3 operator*(geometry_msgs::Vector3 const &lhs,
   return output;
 }
 
-geometry_msgs::Quaternion operator-(geometry_msgs::Quaternion const& rhs)
+geometry_msgs::Vector3 operator/(geometry_msgs::Vector3 const &lhs,
+                                 double const scalar)
 {
-  double const sum_squared = rhs.x * rhs.x + rhs.y * rhs.y + rhs.z * rhs.z +
-      rhs.w * rhs.w;
-  geometry_msgs::Quaternion output;
-  output.x = -rhs.x / sum_squared;
-  output.y = -rhs.y / sum_squared;
-  output.z = -rhs.z / sum_squared;
-  output.w = rhs.w / sum_squared;
+  geometry_msgs::Vector3 output;
+  output.x = lhs.x / scalar;
+  output.y = lhs.y / scalar;
+  output.z = lhs.z / scalar;
   return output;
 }
 
@@ -98,6 +89,9 @@ private:
     this->prev_transform.transform.translation.x = 0.0;
     this->prev_transform.transform.translation.y = 0.0;
     this->prev_transform.transform.translation.z = 0.0;
+    this->prev_velocities.x = 0.0;
+    this->prev_velocities.y = 0.0;
+    this->prev_velocities.z = 0.0;
     this->imu_sub = this->node_handle->subscribe(
         IMU_TOPIC_NAME, 10, &ImuToTf::imuCallback, this);
   }
@@ -116,24 +110,29 @@ private:
       ROS_ERROR("dts = %f", dt_s);
     }
 
-    ROS_INFO("%f, %f, %f; %f, %f, %f; %f",
-        this->prev_transform.transform.translation.x,
-        this->prev_transform.transform.translation.y,
-        this->prev_transform.transform.translation.z,
-        imu_msg->linear_acceleration.x,
-        imu_msg->linear_acceleration.y,
-        imu_msg->linear_acceleration.z,
-        dt_s);
+    // ROS_INFO("%f, %f, %f; %f, %f, %f; %f",
+    //     this->prev_transform.transform.translation.x,
+    //     this->prev_transform.transform.translation.y,
+    //     this->prev_transform.transform.translation.z,
+    //     imu_msg->linear_acceleration.x,
+    //     imu_msg->linear_acceleration.y,
+    //     imu_msg->linear_acceleration.z,
+    //     dt_s);
 
-    transform.transform.translation =
-        0.5 * imu_msg->linear_acceleration * dt_s * dt_s;
-    transform.transform.translation.z -= 0.5 * 9.81 * dt_s * dt_s;
-    transform.transform.translation = quat_rotate(
-        transform.transform.translation, imu_msg->orientation);
+    geometry_msgs::Vector3 const delta_velocities_bf =
+        imu_msg->linear_acceleration * dt_s;
+    geometry_msgs::Vector3 delta_velocities_if = quat_rotate(
+        delta_velocities_bf, imu_msg->orientation);
+    delta_velocities_if.z -= 9.81 * dt_s;
+    geometry_msgs::Vector3 velocities = this->prev_velocities + 
+        delta_velocities_if;
+    transform.transform.translation = 0.5 * delta_velocities_if * dt_s;
+    transform.transform.translation += velocities * dt_s;
     transform.transform.translation +=
         this->prev_transform.transform.translation;
 
     transform.transform.rotation = imu_msg->orientation;
+    ROS_INFO("%f, %f, %f", velocities.x, velocities.y, velocities.z);
     // ROS_INFO("%f, %f, %f; %f, %f, %f, %f",
     //      transform.transform.translation.x,
     //      transform.transform.translation.y,
@@ -143,6 +142,7 @@ private:
     this->transform_broadcaster.sendTransform(transform);
 
     this->prev_transform = transform;
+    this->prev_velocities = velocities;
   }
 
   ros::NodeHandle *node_handle;
@@ -151,6 +151,7 @@ private:
   tf2_ros::TransformBroadcaster transform_broadcaster;
   string parent_frame;
   string child_frame;
+  geometry_msgs::Vector3 prev_velocities;
 };
 
 int main(int argc, char *argv[])

@@ -148,9 +148,9 @@ int main(int argc, char *argv[])
           (average_velocity_mps - prev_average_velocity_mps) / delta_time_s;
       imu_msg.linear_acceleration.z += 9.81;
       imu_pub.publish(imu_msg);
-      prev_prev_transform = prev_transform;
-      prev_transform = current_transform;
     }
+    prev_prev_transform = prev_transform;
+    prev_transform = current_transform;
     rate.sleep();
   }
 
