@@ -105,19 +105,6 @@ private:
     transform.child_frame_id = this->child_frame;
     double const dt_s = imu_msg->header.stamp.toSec() -
                         this->prev_transform.header.stamp.toSec();
-    if (dt_s <= 0.0)
-    {
-      ROS_ERROR("dts = %f", dt_s);
-    }
-
-    // ROS_INFO("%f, %f, %f; %f, %f, %f; %f",
-    //     this->prev_transform.transform.translation.x,
-    //     this->prev_transform.transform.translation.y,
-    //     this->prev_transform.transform.translation.z,
-    //     imu_msg->linear_acceleration.x,
-    //     imu_msg->linear_acceleration.y,
-    //     imu_msg->linear_acceleration.z,
-    //     dt_s);
 
     geometry_msgs::Vector3 const delta_velocities_bf =
         imu_msg->linear_acceleration * dt_s;
@@ -132,12 +119,6 @@ private:
         this->prev_transform.transform.translation;
 
     transform.transform.rotation = imu_msg->orientation;
-    ROS_INFO("%f, %f, %f", velocities.x, velocities.y, velocities.z);
-    // ROS_INFO("%f, %f, %f; %f, %f, %f, %f",
-    //      transform.transform.translation.x,
-    //      transform.transform.translation.y,
-    //      transform.transform.translation.z,
-    //      imu_msg->orientation.x, imu_msg->orientation.y, imu_msg->orientation.z, imu_msg->orientation.w);
 
     this->transform_broadcaster.sendTransform(transform);
 

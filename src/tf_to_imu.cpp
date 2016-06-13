@@ -104,11 +104,13 @@ int main(int argc, char *argv[])
   ros::Publisher imu_pub(
       node_handle.advertise<sensor_msgs::Imu>("/imu/data", 5));
 
-  geometry_msgs::TransformStamped prev_prev_transform = get_transform(
-      parent_frame, child_frame, buffer);
-  geometry_msgs::TransformStamped prev_transform = get_transform(parent_frame,
-                                                                 child_frame,
-                                                                 buffer);
+  geometry_msgs::TransformStamped prev_prev_transform, prev_transform;
+  do
+  {
+    prev_prev_transform = get_transform(parent_frame, child_frame, buffer);
+    prev_transform = get_transform(parent_frame, child_frame, buffer);
+  } while (ros::ok() && prev_transform.header.stamp.toSec() -
+                        prev_prev_transform.header.stamp.toSec() <= 0.0);
 
   ros::Rate rate(50);
 
@@ -123,34 +125,28 @@ int main(int argc, char *argv[])
                                 prev_transform.header.stamp.toSec();
     double const prev_delta_time_s = prev_transform.header.stamp.toSec() -
                                      prev_prev_transform.header.stamp.toSec();
-    if (delta_time_s > 0.0 && prev_delta_time_s > 0.0)
+    if (delta_time_s > 0.0)
     {
-      geometry_msgs::Vector3 const current_transform_rotated =
-          invert_quat_rotate(current_transform.transform.translation,
-                 current_transform.transform.rotation);
-      geometry_msgs::Vector3 const prev_transform_rotated =
-          invert_quat_rotate(prev_transform.transform.translation,
-                 prev_transform.transform.rotation);
-      geometry_msgs::Vector3 const prev_prev_transform_rotated =
-          invert_quat_rotate(prev_prev_transform.transform.translation,
-                 prev_prev_transform.transform.rotation);
       geometry_msgs::Vector3 const delta_translation =
-          current_transform_rotated - prev_transform_rotated;
-      //ROS_INFO("%f, %f, %f", delta_translation.x,
-      //    delta_translation.y, delta_translation.z);
+          current_transform.transform.translation -
+          prev_transform.transform.translation;
       geometry_msgs::Vector3 const prev_delta_translation =
-          prev_transform_rotated - prev_prev_transform_rotated;
+          prev_transform.transform.translation -
+          prev_prev_transform.transform.translation;
       geometry_msgs::Vector3 const average_velocity_mps =
           delta_translation / delta_time_s;
       geometry_msgs::Vector3 const prev_average_velocity_mps =
           prev_delta_translation / prev_delta_time_s;
-      imu_msg.linear_acceleration =
+      geometry_msgs::Vector3 accelerations_inertial_frame =
           (average_velocity_mps - prev_average_velocity_mps) / delta_time_s;
-      imu_msg.linear_acceleration.z += 9.81;
+      accelerations_inertial_frame.z += 9.81;
+      imu_msg.linear_acceleration = invert_quat_rotate(
+          accelerations_inertial_frame,
+          current_transform.transform.rotation);
       imu_pub.publish(imu_msg);
+      prev_prev_transform = prev_transform;
+      prev_transform = current_transform;
     }
-    prev_prev_transform = prev_transform;
-    prev_transform = current_transform;
     rate.sleep();
   }
 
